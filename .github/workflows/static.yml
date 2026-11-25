@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -16,11 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -30,11 +27,49 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Prepare website
+        run: |
+          mkdir -p _site
+          cp index.html _site/index.html
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: '.'
+          name: github-pages
+          path: ./_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Wait for artifact availability
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in {1..12}; do
+            COUNT=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+              --jq '[.artifacts[] | select(.name == "github-pages" and .expired == false)] | length') || COUNT=0
+
+            if [ "$COUNT" = "1" ]; then
+              echo "Artifact is ready."
+              exit 0
+            fi
+
+            echo "Checking artifact ($i/12)"
+            sleep 5
+          done
+
+          echo "::error::GitHub Pages artifact is not available."
+          exit 1
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages
